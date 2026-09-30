@@ -1,88 +1,86 @@
-from flask import Flask, render_template, request
+import joblib
 import pandas as pd
-import pickle
+from flask import Flask, jsonify, request
 
-with open('model.pkl', 'rb') as model_file:
-    model = pickle.load(model_file)
+app = Flask(__name__, static_folder="static", static_url_path="")
 
-app = Flask(__name__)
+bundle = joblib.load("model.pkl")
+pipe, THRESHOLD = bundle["pipeline"], bundle["threshold"]
+FEATURES, METRICS = bundle["features"], bundle["metrics"]
+scaler, clf = pipe.named_steps["scale"], pipe.named_steps["clf"]
 
-education_mapping = {
-    "Graduate School": 1,
-    "University": 2,
-    "High School": 3,
-    "Others": 4
-}
-marriage_mapping = {
-    "Married": 1,
-    "Single": 2,
-    "Others": 3
-}
+MONTHS = ["sept", "aug", "jul", "jun", "may", "apr"]          # newest -> oldest
+PAY_COLS = ["PAY_0", "PAY_2", "PAY_3", "PAY_4", "PAY_5", "PAY_6"]
+EDU = {"Graduate School": 1, "University": 2, "High School": 3, "Others": 4}
+MAR = {"Married": 1, "Single": 2, "Others": 3}
 
-@app.route("/", methods=["GET", "POST"])
+# field name in the form -> (dataset column, label shown in the UI)
+FIELDS = {"limit_bal": ("LIMIT_BAL", "Credit limit"), "age": ("AGE", "Age")}
+for i, m in enumerate(MONTHS):
+    FIELDS[f"pay_status_{m}"] = (PAY_COLS[i], f"Repayment status ({m.title()})")
+    FIELDS[f"bill_amt_{m}"] = (f"BILL_AMT{i+1}", f"Bill amount ({m.title()})")
+    FIELDS[f"pay_amt_{m}"] = (f"PAY_AMT{i+1}", f"Payment made ({m.title()})")
+LABELS = {col: label for col, label in FIELDS.values()}
+LABELS.update({"SEX": "Sex", "EDUCATION": "Education", "MARRIAGE": "Marital status"})
+
+
+def parse(form):
+    """Validate the JSON body and return a one-row DataFrame in training column order."""
+    row = {}
+    for key, (col, label) in FIELDS.items():
+        try:
+            row[col] = float(form[key])
+        except (KeyError, TypeError, ValueError):
+            raise ValueError(f"{label} is missing or not a number")
+    if row["LIMIT_BAL"] <= 0:
+        raise ValueError("Credit limit must be greater than 0")
+    if not 18 <= row["AGE"] <= 100:
+        raise ValueError("Age must be between 18 and 100")
+    for col in PAY_COLS:
+        if not -2 <= row[col] <= 9:
+            raise ValueError("Repayment status must be between -2 and 9")
+    if form.get("sex") not in ("Male", "Female"):
+        raise ValueError("Select a sex")
+    if form.get("education") not in EDU or form.get("marriage") not in MAR:
+        raise ValueError("Select education and marital status")
+    row["SEX"] = 1 if form["sex"] == "Male" else 2
+    row["EDUCATION"] = EDU[form["education"]]
+    row["MARRIAGE"] = MAR[form["marriage"]]
+    return pd.DataFrame([row])[FEATURES]
+
+
+def explain(df, top=5):
+    """Per-feature contribution to the log-odds. For a linear model this is exactly
+    the SHAP value (coefficient x standardised value, baseline = dataset mean)."""
+    contrib = clf.coef_[0] * scaler.transform(df)[0]
+    order = sorted(range(len(FEATURES)), key=lambda i: abs(contrib[i]), reverse=True)[:top]
+    return [{"feature": LABELS.get(FEATURES[i], FEATURES[i]),
+             "impact": round(float(contrib[i]), 3),
+             "direction": "raises risk" if contrib[i] > 0 else "lowers risk"} for i in order]
+
+
+@app.route("/")
 def index():
-    prediction = None
-    if request.method == "POST":
-        # Get data from form
-        limit_bal = int(request.form["limit_bal"])
-        sex = 1 if request.form["sex"] == "Male" else 2
-        education = education_mapping[request.form["education"]]
-        marriage = marriage_mapping[request.form["marriage"]]
-        age = int(request.form["age"])
-        pay_status_sept = int(request.form["pay_status_sept"])
-        pay_status_aug = int(request.form["pay_status_aug"])
-        pay_status_jul = int(request.form["pay_status_jul"])
-        pay_status_jun = int(request.form["pay_status_jun"])
-        pay_status_may = int(request.form["pay_status_may"])
-        pay_status_apr = int(request.form["pay_status_apr"])
-        bill_amt_sept = int(request.form["bill_amt_sept"])
-        bill_amt_aug = int(request.form["bill_amt_aug"])
-        bill_amt_jul = int(request.form["bill_amt_jul"])
-        bill_amt_jun = int(request.form["bill_amt_jun"])
-        bill_amt_may = int(request.form["bill_amt_may"])
-        bill_amt_apr = int(request.form["bill_amt_apr"])
-        pay_amt_sept = int(request.form["pay_amt_sept"])
-        pay_amt_aug = int(request.form["pay_amt_aug"])
-        pay_amt_jul = int(request.form["pay_amt_jul"])
-        pay_amt_jun = int(request.form["pay_amt_jun"])
-        pay_amt_may = int(request.form["pay_amt_may"])
-        pay_amt_apr = int(request.form["pay_amt_apr"])
+    return app.send_static_file("index.html")
 
-        # Create DataFrame for the input data
-        user_input_data = pd.DataFrame({
-            "LIMIT_BAL": [limit_bal],
-            "SEX": [sex],
-            "EDUCATION": [education],
-            "MARRIAGE": [marriage],
-            "AGE": [age],
-            "PAY_0": [pay_status_sept],
-            "PAY_2": [pay_status_aug],
-            "PAY_3": [pay_status_jul],
-            "PAY_4": [pay_status_jun],
-            "PAY_5": [pay_status_may],
-            "PAY_6": [pay_status_apr],
-            "BILL_AMT1": [bill_amt_sept],
-            "BILL_AMT2": [bill_amt_aug],
-            "BILL_AMT3": [bill_amt_jul],
-            "BILL_AMT4": [bill_amt_jun],
-            "BILL_AMT5": [bill_amt_may],
-            "BILL_AMT6": [bill_amt_apr],
-            "PAY_AMT1": [pay_amt_sept],
-            "PAY_AMT2": [pay_amt_aug],
-            "PAY_AMT3": [pay_amt_jul],
-            "PAY_AMT4": [pay_amt_jun],
-            "PAY_AMT5": [pay_amt_may],
-            "PAY_AMT6": [pay_amt_apr]
-        })
 
-        # Make prediction
-        predicted_default = model.predict(user_input_data)
-        
-        # Interpret the prediction
-        if predicted_default[0] == 1:
-            prediction = "The model predicts that the client may default on their credit card payment."
-        else:
-            prediction = "The model predicts that the client is unlikely to default on their credit card payment."
+@app.route("/health")
+def health():
+    return jsonify(status="ok", metrics=METRICS)
 
-    return render_template("index.html", prediction=prediction)
 
+@app.route("/predict", methods=["POST"])
+def predict():
+    try:
+        df = parse(request.get_json(silent=True) or {})
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+    prob = float(pipe.predict_proba(df)[0, 1])
+    flag = int(prob >= THRESHOLD)
+    return jsonify(default_probability=prob, default_prediction=flag,
+                   threshold=THRESHOLD, Result="High Risk" if flag else "Low Risk",
+                   factors=explain(df))
+
+
+if __name__ == "__main__":
+    app.run(debug=True)

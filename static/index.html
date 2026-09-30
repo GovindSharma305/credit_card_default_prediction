@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#0db8d8" />
+  <meta name="theme-color" content="#07131b" />
+  <meta name="color-scheme" content="dark" />
   <title>Credit Ledger — Card Default Risk</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -230,8 +231,9 @@
       <div class="verdict__inner">
         <div class="gauge-card">
           <div class="verdict__gauge">
-            <svg viewBox="0 0 200 200" class="gauge">
+            <svg viewBox="0 0 200 200" class="gauge" role="img" aria-label="Default probability gauge">
               <circle class="gauge__track" cx="100" cy="100" r="86" />
+              <circle class="gauge__glow" cx="100" cy="100" r="86" />
               <circle class="gauge__fill" id="gaugeFill" cx="100" cy="100" r="86" />
               <line class="gauge__threshold" id="gaugeThreshold" x1="100" y1="14" x2="100" y2="30" />
             </svg>
@@ -239,6 +241,11 @@
               <span class="gauge__number" id="probNumber">0</span><span class="gauge__percent">%</span>
               <span class="gauge__caption">default probability</span>
             </div>
+          </div>
+          <div class="risk-meter" aria-hidden="true">
+            <div class="risk-meter__labels"><span>0%</span><span>50%</span><span>100%</span></div>
+            <div class="risk-meter__track"><div class="risk-meter__fill"></div></div>
+          </div>
           </div>
         </div>
 
